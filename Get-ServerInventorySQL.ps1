@@ -493,7 +493,7 @@ Log-Start -LogPath $sLogPath -LogName $sLogName -ScriptName $sScriptName -Script
 
 # open database connection
 
-$connString = "Data Source=Q19466\SQLEXPRESS; Initial Catalog=PowerShellServerInventory; Integrated Security=True"
+$connString = "Data Source=COMPUTER\SQLEXPRESS; Initial Catalog=PowerShellServerInventory; Integrated Security=True"
 $sqlConnection = Connect-Database $connString
 Log-Write -LogPath $sLogFile -LineValue "Database connection to $connString"
 $sqlConnection.Open()
