@@ -36,10 +36,8 @@
     Log file 
 
 .NOTES
-    Version:        1.0
+    Version:        1.1
     Author:         Pierre-Alexandre Braeken
-    Creation Date:  2015-05-12
-    Purpose/Change: Initial script development
   
 .EXAMPLE
     .\Get-ServerInventorySQL.ps1
@@ -240,10 +238,13 @@ Function Get-NtfsRights($name,$path,$comp) {
 # ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
 # Function Name 'listProgramsInstalled' - get info in registry 
 # ________________________________________________________________________
-Function listProgramsInstalled ($uninstallKey) {
+Function listProgramsInstalled {
+Param(
+        [string]$UninstallKey,
+        [string]$ComputerName
+    )
     $array = @()
-
-    $computername = $strComputer           
+         
     $remoteBaseKeyObject = [microsoft.win32.registrykey]::OpenRemoteBaseKey('LocalMachine',$computername)     
     if($remoteBaseKeyObject) {
         $remoteBaseKey = $remoteBaseKeyObject.OpenSubKey($uninstallKey)             
@@ -263,6 +264,37 @@ Function listProgramsInstalled ($uninstallKey) {
     }  
     $array
 }
+# ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+# Function Name 'List-ProgramsInstalled' - get info by WMI request 
+# ________________________________________________________________________
+Function List-ProgramsInstalled {
+Param(
+        [string]$UninstallKey,
+        [string]$ComputerName,
+        $Credential
+    )
+    $array = @()
+         
+    $wmi = Get-WmiObject  -List "StdRegProv" -Namespace root\default -ComputerName $ComputerName -Credential $Credential
+    
+    $subkeys = $wmi.EnumKey(2147483650,$UninstallKey)
+    if($subkeys) {
+        $remoteSubkeysNames = $subkeys.sNames           
+        foreach($key in $remoteSubkeysNames){                              
+            $thisSubKey=$UninstallKey+"\"+$key         
+            $psObject = New-Object PSObject        
+            $psObject | Add-Member -MemberType NoteProperty -Name "DisplayName" -Value $(($wmi.GetStringValue(2147483650,$thisSubKey,"DisplayName")).sValue)
+            $psObject | Add-Member -MemberType NoteProperty -Name "DisplayVersion" -Value $(($wmi.GetStringValue(2147483650,$thisSubKey,"DisplayVersion")).sValue)
+            $psObject | Add-Member -MemberType NoteProperty -Name "InstallLocation" -Value $(($wmi.GetStringValue(2147483650,$thisSubKey,"InstallLocation")).sValue)
+            $psObject | Add-Member -MemberType NoteProperty -Name "Publisher" -Value $(($wmi.GetStringValue(2147483650,$thisSubKey,"Publisher")).sValue)
+            $psObject | Add-Member -MemberType NoteProperty -Name "DisplayIcon" -Value $(($wmi.GetStringValue(2147483650,$thisSubKey,"DisplayIcon")).sValue)
+            $array += $psObject            
+        }             
+    }
+
+    $array   
+}
+
 # ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
 # Function Name 'getTasks' - get scheduled tasks on remote server 
 # ________________________________________________________________________
@@ -286,6 +318,7 @@ Function getTasks($path) {
     }    
     $out
 }
+<#
 # ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
 # Function Name 'getLocalUsersInGroup' - get local users in groups 
 # ________________________________________________________________________
@@ -305,6 +338,45 @@ function getLocalUsersInGroup {
     }
     $localUserinGroups
 }
+#>
+# ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+# Function Name 'getLocalUsersInGroup' - get local users in groups 
+# ________________________________________________________________________
+function getLocalUsersInGroup {
+Param(
+        [string]$ComputerName,
+        $Credential
+    )
+    if($saveIntDomainRole -le 3) {
+        $user = $Credential.UserName
+        $pass = $($Credential.GetNetworkCredential().password)
+
+        # Create an ADSI Search    
+        $serverADSIObject = New-Object System.DirectoryServices.DirectoryEntry("WinNT://$ComputerName",$user,$pass)
+        # Limit the output to 50 objects
+        $serverADSIObject.SizeLimit = '50'
+
+        # Add the Domain to the search
+        # $serverADSIObject.SearchRoot = $DomainEntry
+
+        # Execute the Search
+        $serverADSIObject.FindAll()
+
+        $serverADSIObject = [ADSI]"WinNT://$ComputerName,computer"
+        $localUserinGroups=@()
+        $serverADSIObject.psbase.children | Where { $_.psbase.schemaClassName -eq 'group' } |`
+            foreach {
+                $group =[ADSI]$_.psbase.Path
+                $group.psbase.Invoke("Members") | `
+                foreach {$localUserinGroups += New-Object psobject -property @{Group = $group.Name;User=(($_.GetType().InvokeMember("Adspath", 'GetProperty', $null, $_, $null)) -replace "WinNT://","")}}
+            }
+    }
+    else {
+        $localUserinGroups = @()
+    }
+    $localUserinGroups
+}
+
 # ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
 # Function Name 'listODBCConfigured' - get ODBC connections configured 
 # ________________________________________________________________________
@@ -376,9 +448,9 @@ Function ListFile {
 Function Run-WmiRemoteProcess
 {
     Param(
-        [string]$computername=$env:COMPUTERNAME,
-        [string]$cmd=$(Throw "You must enter the full path to the command which will create the process."),
-        [int]$timeout = 0
+        [string]$ComputerName=$env:COMPUTERNAME,
+        [string]$Cmd=$(Throw "You must enter the full path to the command which will create the process."),
+        [int]$TimeOut = 0
     )
  
     Write-Host "Process to create on $computername is $cmd"
@@ -491,9 +563,13 @@ function Parse-SecdumpFileToObject {
 
 Log-Start -LogPath $sLogPath -LogName $sLogName -ScriptName $sScriptName -ScriptVersion $sScriptVersion
 
+$ServerName = ''
+$UserName = 'domain\user'
+$Credential = Get-Credential -Credential $UserName
+
 # open database connection
 
-$connString = "Data Source=COMPUTER\SQLEXPRESS; Initial Catalog=PowerShellServerInventory; Integrated Security=True"
+$connString = "Data Source=DC01\SQLEXPRESS; Initial Catalog=PowerShellServerInventory; Integrated Security=True"
 $sqlConnection = Connect-Database $connString
 Log-Write -LogPath $sLogFile -LineValue "Database connection to $connString"
 $sqlConnection.Open()
@@ -515,7 +591,7 @@ foreach ($strComputer in $colComputers){
     $strComputer = $strComputer.ServerName
     $serverName = $strComputer
     Write-Progress -Activity "Getting general information ($strComputer)" -status "Running..." -id 1                 
-    $items = gwmi Win32_ComputerSystem -Comp $strComputer | Select-Object Domain, DomainRole, Manufacturer, Model, SystemType, NumberOfProcessors, TotalPhysicalMemory 
+    $items = gwmi Win32_ComputerSystem -Comp $strComputer -Credential $Credential | Select-Object Domain, DomainRole, Manufacturer, Model, SystemType, NumberOfProcessors, TotalPhysicalMemory 
     if($items) {
         $domain = $items.Domain
         $domainRole = $items.DomainRole
@@ -526,22 +602,22 @@ foreach ($strComputer in $colComputers){
         $totalPhysicalMemory = [math]::round(($items.TotalPhysicalMemory)/1024/1024/1024, 0)    
         Write-Progress -Activity "Getting systems information ($strComputer)" -status "Running..." -id 1
         $items = ""
-        $items = gwmi Win32_OperatingSystem -Comp $strComputer | Select-Object Caption, csdversion   
+        $items = gwmi Win32_OperatingSystem -Comp $strComputer -Credential $Credential | Select-Object Caption, csdversion   
         $operatingSystem = $items.Caption
         $servicePackLevel = $items.csdversion
         $items = ""
-        $items = gwmi Win32_BIOS -Comp $strComputer | Select-Object Name, SMBIOSbiosVersion, SerialNumber
+        $items = gwmi Win32_BIOS -Comp $strComputer -Credential $Credential | Select-Object Name, SMBIOSbiosVersion, SerialNumber
         $biosName = $items.Name
         $biosVersion = $items.SMBIOSbiosVersion
         $hardwareSerial = $items.SerialNumber
         $items = ""
-        $items = gwmi Win32_TimeZone -Comp $strComputer | Select-Object Caption
+        $items = gwmi Win32_TimeZone -Comp $strComputer -Credential $Credential | Select-Object Caption
         $timeZone = $items.Caption
         $items = ""
-        $items = gwmi Win32_WmiSetting -Comp $strComputer | Select-Object BuildVersion    
+        $items = gwmi Win32_WmiSetting -Comp $strComputer -Credential $Credential | Select-Object BuildVersion    
         $wmiVersion = $items.BuildVersion             	      
         $items = ""
-        $items = gwmi Win32_PageFileUsage -Comp $strComputer | Select-Object Name, CurrentUsage, PeakUsage, AllocatedBaseSize    
+        $items = gwmi Win32_PageFileUsage -Comp $strComputer -Credential $Credential | Select-Object Name, CurrentUsage, PeakUsage, AllocatedBaseSize    
         $virtualMemoryName = $items.Name
         $virtualMemoryCurrentUsage = $items.CurrentUsage
         $virtualMermoryPeakUsage = $items.PeakUsage
@@ -570,7 +646,7 @@ foreach ($strComputer in $colComputers){
 
         Write-Progress -Activity "Getting processor information ($strComputer)" -status "Running..." -id 1     
         $items = ""
-        $items = gwmi Win32_Processor -Comp $strComputer | Select-Object DeviceID, Name, Description, family, currentClockSpeed, l2cacheSize, UpgradeMethod, SocketDesignation
+        $items = gwmi Win32_Processor -Comp $strComputer -Credential $Credential | Select-Object DeviceID, Name, Description, family, currentClockSpeed, l2cacheSize, UpgradeMethod, SocketDesignation
         Write-Progress -Activity "Inserting processor information ($strComputer)" -status "Running..." -id 1  
         foreach($item in $items) {
             $deviceLocator = $item.DeviceID
@@ -590,7 +666,7 @@ foreach ($strComputer in $colComputers){
 
         Write-Progress -Activity "Getting memory information ($strComputer)" -status "Running..." -id 1
         $items = ""
-        $items = gwmi Win32_PhysicalMemory -Comp $strComputer | Select-Object DeviceLocator, Capacity, FormFactor, TypeDetail
+        $items = gwmi Win32_PhysicalMemory -Comp $strComputer -Credential $Credential | Select-Object DeviceLocator, Capacity, FormFactor, TypeDetail
         Write-Progress -Activity "Inserting memory information ($strComputer)" -status "Running..." -id 1
         foreach($item in $items) {
             $deviceLocator = $item.DeviceLocator
@@ -604,7 +680,7 @@ foreach ($strComputer in $colComputers){
 
         Write-Progress -Activity "Getting disks information ($strComputer)" -status "Running..." -id 1      
         $items = ""       
-        $items = gwmi Win32_LogicalDisk -Comp $strComputer | Select-Object DriveType, DeviceID, Size, FreeSpace
+        $items = gwmi Win32_LogicalDisk -Comp $strComputer -Credential $Credential | Select-Object DriveType, DeviceID, Size, FreeSpace
         Write-Progress -Activity "Inserting disk information ($strComputer)" -status "Running..." -id 1  
         foreach($item in $items) {
             $driveType = $item.DriveType
@@ -626,7 +702,7 @@ foreach ($strComputer in $colComputers){
 
         Write-Progress -Activity "Getting network information ($strComputer)" -status "Running..." -id 1 
         $items = ""
-        $items = gwmi Win32_NetworkAdapterConfiguration -Comp $strComputer | Where{$_.IPEnabled -eq "True"} | Select-Object Caption, DHCPEnabled, IPAddress, IPSubnet, DefaultIPGateway, DNSServerSearchOrder, FullDNSRegistrationEnabled, WINSPrimaryServer, WINSSecondaryServer, WINSEnableLMHostsLookup
+        $items = gwmi Win32_NetworkAdapterConfiguration -Comp $strComputer -Credential $Credential | Where{$_.IPEnabled -eq "True"} | Select-Object Caption, DHCPEnabled, IPAddress, IPSubnet, DefaultIPGateway, DNSServerSearchOrder, FullDNSRegistrationEnabled, WINSPrimaryServer, WINSSecondaryServer, WINSEnableLMHostsLookup
         Write-Progress -Activity "Inserting network information ($strComputer)" -status "Running..." -id 1  
         foreach($item in $items) {
             $caption = $item.Caption
@@ -648,8 +724,12 @@ foreach ($strComputer in $colComputers){
 
         Write-Progress -Activity "Getting programs installed information ($strComputer)" -status "Running..." -id 1       
         # Populate Installed Programs           
-        $arrayprogramsInstalled = listProgramsInstalled "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"        
-        $arrayprogramsInstalled2 = listProgramsInstalled "SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"      
+        #$arrayprogramsInstalled = listProgramsInstalled -UninstallKey "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall" -ComputerName $strComputer     
+        #$arrayprogramsInstalled2 = listProgramsInstalled -Key "SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall" -ComputerName $strComputer     
+
+        $arrayprogramsInstalled = List-ProgramsInstalled -UninstallKey "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" -ComputerName $strComputer -Credential $Credential
+        $arrayprogramsInstalled2 = List-ProgramsInstalled -UninstallKey "SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ComputerName $strComputer -Credential $Credential
+
         $items = ""      
         $items = $arrayprogramsInstalled + $arrayprogramsInstalled2      
         Write-Progress -Activity "Inserting installed programs information ($strComputer)" -status "Running..." -id 1  
@@ -658,8 +738,9 @@ foreach ($strComputer in $colComputers){
             $displayVersion = $item.DisplayVersion
             $installLocation = $item.InstallLocation
             $publisher = $item.Publisher    
+            $displayicon = $item.displayicon 
             if(!([string]::IsNullOrEmpty($displayName))) {    
-                $installedProgramQueryInsert = "INSERT INTO InstalledProgramAudited (serverID,displayName,displayVersion,installLocation,publisher) VALUES ('$nbServer','$displayName','$displayVersion','$installLocation','$publisher')"
+                $installedProgramQueryInsert = "INSERT INTO InstalledProgramAudited (serverID,displayName,displayVersion,installLocation,publisher,displayicon) VALUES ('$nbServer','$displayName','$displayVersion','$installLocation','$publisher','$displayicon')"
                 Insert-IntoDatabase $sqlCommand $installedProgramQueryInsert
                 Log-Write -LogPath $sLogFile -LineValue "$installedProgramQueryInsert"
             }
@@ -667,7 +748,7 @@ foreach ($strComputer in $colComputers){
 
         # Populate Shares 
         Write-Progress -Activity "Getting shares information ($strComputer)" -status "Running..." -id 1 
-        if ($shares = Get-WmiObject Win32_Share -ComputerName $strComputer) {        
+        if ($shares = Get-WmiObject Win32_Share -ComputerName $strComputer -Credential $Credential) {        
             $items = @() 
 	        $shares | Foreach {$items += Get-NtfsRights $_.Name $_.Path $_.__Server}
         }
@@ -699,7 +780,7 @@ foreach ($strComputer in $colComputers){
         # Populate Services   
         Write-Progress -Activity "Getting services information ($strComputer)" -status "Running..." -id 1 	
         $items = ""
-        $items = Get-WmiObject win32_service -Comp $strComputer | Select-Object DisplayName, Name, StartName, StartMode, PathName, Description                 
+        $items = Get-WmiObject win32_service -Comp $strComputer -Credential $Credential | Select-Object DisplayName, Name, StartName, StartMode, PathName, Description                 
         Write-Progress -Activity "Inserting services information ($strComputer)" -status "Running..." -id 1
         foreach ($item in $items) { 
             $displayName = $item.DisplayName
@@ -743,7 +824,7 @@ foreach ($strComputer in $colComputers){
         # Populate Printers     
         Write-Progress -Activity "Getting printers information ($strComputer)" -status "Running..." -id 1
         $items = ""
-        $items = gwmi Win32_Printer -Comp $strComputer | Select-Object Location, Name, PrinterState, PrinterStatus, ShareName, SystemName           
+        $items = gwmi Win32_Printer -Comp $strComputer -Credential $Credential | Select-Object Location, Name, PrinterState, PrinterStatus, ShareName, SystemName           
         Write-Progress -Activity "Inserting Printers information ($strComputer)" -status "Running..." -id 1  
         foreach ($item in $items) {  
             $name = $item.Name
@@ -760,7 +841,7 @@ foreach ($strComputer in $colComputers){
         # Populate Process worksheet       
         Write-Progress -Activity "Getting process information ($strComputer)" -status "Running..." -id 1     
         $items = ""
-        $items = gwmi win32_process -ComputerName $strComputer | select-object Name, Path, SessionId 
+        $items = gwmi win32_process -ComputerName $strComputer -Credential $Credential | select-object Name, Path, SessionId 
         Write-Progress -Activity "Inserting Process information ($strComputer)" -status "Running..." -id 1  
         foreach ($item in $items) {  
             $name = $item.Name
@@ -826,7 +907,7 @@ foreach ($strComputer in $colComputers){
 
         Write-Progress -Activity "Getting local users information ($strComputer)" -status "Running..." -id 1                 
         $items = ""
-        $items = getLocalUsersInGroup  
+        $items = getLocalUsersInGroup -ComputerName $strComputer -Credential $Credential
         Write-Progress -Activity "Inserting local users information ($strComputer)" -status "Running..." -id 1  
         foreach($item in $items) {
             $group = $item.Group
@@ -837,14 +918,14 @@ foreach ($strComputer in $colComputers){
         }
 
         Write-Progress -Activity "Getting OS Privileges information ($strComputer)" -status "Running..." -id 1   
-        Run-WmiRemoteProcess $computername 'secedit.exe /export /cfg c:\secdump.txt' | Wait-Process
+        Run-WmiRemoteProcess -ComputerName $strComputer -Cmd 'secedit.exe /export /cfg c:\secdump.txt' | Wait-Process
         Start-Sleep -Seconds 3  # wait for file to be created
 
         [string]$strScriptPath = Split-Path $MyInvocation.MyCommand.Pathwhoami
         $file = ($strScriptPath + "secdump.txt")
         try {
 
-        $fileTocopy = "\\$computername\c$\secdump.txt"
+        $fileTocopy = "\\$strComputer\c$\secdump.txt"
 
         Copy-Item $fileTocopy $file
         }
@@ -855,7 +936,7 @@ foreach ($strComputer in $colComputers){
         $dumpResult = Parse-SecdumpFileToObject $file
         Start-Sleep -Seconds 1
 
-        Remove-Item \\$computername\c$\secdump.txt
+        Remove-Item \\$strComputer\c$\secdump.txt
         Remove-Item $file
 
         # convert the dump to XML to a test file
@@ -863,7 +944,7 @@ foreach ($strComputer in $colComputers){
         # Save Dump Data in the Output File
         $XMLDump.Save("secdump.xml")
 
-        $xmlPath = "$scriptPath\logging\secdump.xml"
+        $xmlPath = "$scriptPath\secdump.xml"
         $nodes = ""
         $nodes = Select-Xml -Path $xmlPath -XPath "//Property" | Select-Object -ExpandProperty Node
 
